@@ -1,13 +1,6 @@
-import mysql.connector
-
-mydb = mysql.connector.connect(
-  host="35.222.7.78",
-  user="digitalskola",
-  password="D6GhCbaaiq8LlNy7",
-  database="digitalskola"
-)
-mycursor = mydb.cursor()
-
-mycursor.execute("DROP TABLE customers")
-
-
+#Import create_engine, MetaData
+from sqlalchemy import create_engine, MetaData
+#Define Engine to MySQL
+engine=create_engine('mysql+pymysql://digitalskola:D6GhCbaaiq8LlNy7@35.222.7.78/digitalskola')
+#Test 
+print(engine.table_names())
