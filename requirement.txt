@@ -1,0 +1,2 @@
+sqlalchemy for connecting dbase with python
+pandas for read json data
