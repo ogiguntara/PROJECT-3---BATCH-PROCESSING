@@ -1,2 +1,4 @@
-sqlalchemy for connecting dbase with python
-pandas for read json data
+sqlalchemy
+psycopg2-binary
+pandas
+pymysql

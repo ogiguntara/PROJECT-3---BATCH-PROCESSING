@@ -1,53 +1,50 @@
-#import create_engine, MetaData , Pandas
-from genericpath import exists
-from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer, Float, Boolean, inspect
-import sqlalchemy
-from sqlalchemy.schema import CreateSchema,DropSchema
+# IMPORT MODULE
+import json
 import pandas as pd
 import numpy as np
-#define Engine to MySQL
-engine_mysql=create_engine('mysql+pymysql://digitalskola:D6GhCbaaiq8LlNy7@35.222.7.78/digitalskola')
-#test print(engine_mysql.table_names())
-#create a connection engine
-connection_mysql=engine_mysql.connect()
-#loading a JSON in to table:
-json_file=pd.read_json('./data/data_covid.json')
-#test print(json_file)
-covid19_df=pd.DataFrame(json_file['data']['content'])
-#lower column name
-covid19_df.columns = [x.lower() for x in covid19_df.to_dict()]
-#test print(covid19_df)
-#load data json to mysql
-covid19_df.to_sql(name='ogi_raw_covid', con=connection_mysql, if_exists='replace',index=False)
-engine_mysql.dispose()
-#test print(engine_mysql.table_names())
-#define engine to PostgreSQL
-engine_postgresql = create_engine('postgresql+psycopg2://digitalskola:D6GhCbaaiq8LlNy7@35.193.53.27/digitalskola')
-#create schema if not exist
-engine_postgresql.execute('CREATE SCHEMA IF NOT EXISTS ogi')
-metadata=MetaData(schema="ogi")
-print(engine_postgresql.table_names(schema='ogi'))
-connection_postgresql=engine_postgresql.connect()
-#create dim table
-dim_province=Table('dim_province',metadata,Column('province_id',String(255),primary_key=True),Column('province_name',String(255)))
-dim_district=Table('dim_district',metadata,Column('district_id',String(255),primary_key=True),Column('province_id',String(255)),Column('district_name',String(255)))
-#Serial Function
-i = 0
-def serial():
-    global i
-    i += 1
-    return i
-dim_case=Table('dim_case',metadata,Column('id',Integer,primary_key=True,default=serial),Column('status_name',String(255)),Column('status_detail',String(255)))
-#create fact table
-fact_province_daily=Table('fact_province_daily',metadata,Column('id',Integer, default=serial),Column('province_id',String(255)),Column('case_id',Integer),Column('date',String(255)),Column('total',Integer))
-fact_province_monthly=Table('fact_province_monthly',metadata,Column('id',Integer, default=serial),Column('province_id',String(255)),Column('case_id',Integer),Column('date',String(255)),Column('total',Integer))
-fact_province_yearly=Table('fact_province_yearly',metadata,Column('id',Integer, default=serial),Column('province_id',String(255)),Column('case_id',Integer),Column('date',String(255)),Column('total',Integer))
-fact_district_monthly=Table('fact_district_monthly',metadata,Column('id',Integer, default=serial),Column('district_id',String(255)),Column('case_id',Integer),Column('date',String(255)),Column('total',Integer))
-fact_district_yearly=Table('fact_district_yearly',metadata,Column('id',Integer, default=serial),Column('district_id',String(255)),Column('case_id',Integer),Column('date',String(255)),Column('total',Integer))
-metadata.create_all(engine_postgresql)
-# test print(engine_postgresql.table_names(schema='ogi'))
-#read data from mysql
-data=pd.read_sql(sql='ogi_raw_covid', con=connection_mysql)
+
+# IMPORT SCRIPT
+from script.mysql import MySQL
+from script.postgresql import PostgreSQL
+
+# IMPORT SQL
+from sql.query import create_table_dim, create_table_fact
+
+
+with open ('credential.json', "r") as cred:
+        credential = json.load(cred)
+
+
+def insert_raw_data():
+  mysql_auth = MySQL(credential['mysql_lake'])
+  engine, engine_conn = mysql_auth.connect()
+
+  with open ('./data/data_covid.json', "r") as data:
+    data = json.load(data)
+
+  df = pd.DataFrame(data['data']['content'])
+
+  df.columns = [x.lower() for x in df.columns.to_list()]
+  df.to_sql(name='ogi_raw_covid', con=engine, if_exists="replace", index=False)
+  engine.dispose()
+
+
+def create_star_schema(schema):
+  postgre_auth = PostgreSQL(credential['postgresql_warehouse'])
+  conn, cursor = postgre_auth.connect(conn_type='cursor')
+
+  query_dim = create_table_dim(schema=schema)
+  cursor.execute(query_dim)
+  conn.commit()
+
+  query_fact = create_table_fact(schema=schema)
+  cursor.execute(query_fact)
+  conn.commit()
+
+  cursor.close()
+  conn.close()
+
+
 def insert_dim_province(data):
     column_start = ["kode_prov", "nama_prov"]
     column_end = ["province_id", "province_name"]
@@ -204,27 +201,44 @@ def insert_fact_district_yearly(data, dim_case):
     
     return data
 
-column = ["tanggal", "kode_prov", "nama_prov", "kode_kab", "nama_kab", "suspect_diisolasi", "suspect_discarded", "closecontact_dikarantina", "closecontact_discarded", "probable_diisolasi", "probable_discarded", "confirmation_sembuh", "confirmation_meninggal", "suspect_meninggal", "closecontact_meninggal", "probable_meninggal"]
-data = data[column]
 
-dim_province = insert_dim_province(data)
-dim_district = insert_dim_district(data)
-dim_case = insert_dim_case(data)
+def insert_raw_to_warehouse(schema):
+    mysql_auth = MySQL(credential['mysql_lake'])
+    engine, engine_conn = mysql_auth.connect()
+    data = pd.read_sql(sql='ogi_raw_covid', con=engine)
+    engine.dispose()
 
-fact_province_daily = insert_fact_province_daily(data, dim_case)
-fact_province_monthly = insert_fact_province_monthly(data, dim_case)
-fact_province_yearly = insert_fact_province_yearly(data, dim_case)
-fact_district_monthly = insert_fact_district_monthly(data, dim_case)
-fact_district_yearly = insert_fact_district_yearly(data, dim_case)
+    # filter needed column
+    column = ["tanggal", "kode_prov", "nama_prov", "kode_kab", "nama_kab", "suspect_diisolasi", "suspect_discarded", "closecontact_dikarantina", "closecontact_discarded", "probable_diisolasi", "probable_discarded", "confirmation_sembuh", "confirmation_meninggal", "suspect_meninggal", "closecontact_meninggal", "probable_meninggal"]
+    data = data[column]
 
-dim_province.to_sql('dim_province', metadata, con=connection_postgresql, index=False, if_exists='replace')
-dim_district.to_sql('dim_district', metadata, con=connection_postgresql, index=False, if_exists='replace')
-dim_case.to_sql('dim_case', metadata, con=connection_postgresql, index=False, if_exists='replace')
+    dim_province = insert_dim_province(data)
+    dim_district = insert_dim_district(data)
+    dim_case = insert_dim_case(data)
 
-fact_province_daily.to_sql('fact_province_daily', metadata, con=connection_postgresql, index=False, if_exists='replace')
-fact_province_monthly.to_sql('fact_province_monthly', metadata, con=connection_postgresql, index=False, if_exists='replace')
-fact_province_yearly.to_sql('fact_province_yearly', metadata, con=connection_postgresql, index=False, if_exists='replace')
-fact_district_monthly.to_sql('fact_district_monthly', metadata, con=connection_postgresql, index=False, if_exists='replace')
-fact_district_yearly.to_sql('fact_district_yearly', metadata, con=connection_postgresql, index=False, if_exists='replace')
+    fact_province_daily = insert_fact_province_daily(data, dim_case)
+    fact_province_monthly = insert_fact_province_monthly(data, dim_case)
+    fact_province_yearly = insert_fact_province_yearly(data, dim_case)
+    fact_district_monthly = insert_fact_district_monthly(data, dim_case)
+    fact_district_yearly = insert_fact_district_yearly(data, dim_case)
 
-engine_postgresql.dispose()
+    postgre_auth = PostgreSQL(credential['postgresql_warehouse'])
+    engine, engine_conn = postgre_auth.connect(conn_type='engine')
+
+    dim_province.to_sql('dim_province', schema=schema, con=engine, index=False, if_exists='replace')
+    dim_district.to_sql('dim_district', schema=schema, con=engine, index=False, if_exists='replace')
+    dim_case.to_sql('dim_case', schema=schema, con=engine, index=False, if_exists='replace')
+
+    fact_province_daily.to_sql('fact_province_daily', schema=schema, con=engine, index=False, if_exists='replace')
+    fact_province_monthly.to_sql('fact_province_monthly', schema=schema, con=engine, index=False, if_exists='replace')
+    fact_province_yearly.to_sql('fact_province_yearly', schema=schema, con=engine, index=False, if_exists='replace')
+    fact_district_monthly.to_sql('fact_district_monthly', schema=schema, con=engine, index=False, if_exists='replace')
+    fact_district_yearly.to_sql('fact_district_yearly', schema=schema, con=engine, index=False, if_exists='replace')
+
+    engine.dispose()
+
+
+if __name__ == '__main__':
+  insert_raw_data()
+  create_star_schema(schema='ogi')
+  insert_raw_to_warehouse(schema='ogi')
