@@ -1,3 +1,6 @@
+![project 2](https://user-images.githubusercontent.com/96209699/176354659-0a3cf5b7-de1d-4af7-aef7-177289f50415.jpg)
+
+
 Description
 
 Tugas kalian adalah mengolah data covid-19 di Jawa Barat dari raw data sampai ke
